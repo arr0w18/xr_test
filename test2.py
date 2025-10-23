@@ -2,46 +2,68 @@ import re
 
 
 def reg_search(text, regex_list):
-    # 处理文本，去除换行符，确保匹配不受换行影响
+    # 预处理：只去掉换行，保留空格避免影响格式
     processed_text = text.replace('\n', '')
     result = []
 
-    for regex_dict in regex_list:
+    for field_regex in regex_list:
         item = {}
-        for key in regex_dict:
-            if key == '标的证券':
-                # 匹配股票代码，格式为 数字.SH
-                pattern = r'(\d+\.SH)'
-                match = re.search(pattern, processed_text)
-                item[key] = match.group(1) if match else None
+        for field, regex in field_regex.items():
+            # 匹配时忽略大小写，兼容更多情况
+            matches = re.findall(regex, processed_text, re.IGNORECASE)
 
-            elif key == '换股期限':
-                # 匹配带空格的日期格式（如：2023 年 6 月 2 日）
-                # 允许数字与"年/月/日"之间有空格，并用非贪婪模式匹配两个日期
-                pattern = r'(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日.*?(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日'
-                match = re.search(pattern, processed_text)
-                if match:
-                    # 提取并格式化日期（补全两位数）
-                    start_date = f"{match.group(1)}-{match.group(2).zfill(2)}-{match.group(3).zfill(2)}"
-                    end_date = f"{match.group(4)}-{match.group(5).zfill(2)}-{match.group(6).zfill(2)}"
-                    item[key] = [start_date, end_date]
+            if not matches:
+                # 换股期限默认空列表，其他字段默认None
+                item[field] = [] if field == '换股期限' else None
+                continue
+
+            # 处理换股期限，格式化日期
+            if field == '换股期限':
+                date_list = []
+                for match in matches:
+                    # 确保是(年,月,日)的元组
+                    if isinstance(match, tuple) and len(match) == 3:
+                        year, month, day = match
+                        # 清洗掉非数字字符
+                        year = re.sub(r'\D', '', year)
+                        month = re.sub(r'\D', '', month)
+                        day = re.sub(r'\D', '', day)
+                        # 补全位数并拼接
+                        if year and month and day:
+                            date_str = f"{year.zfill(4)}-{month.zfill(2)}-{day.zfill(2)}"
+                            date_list.append(date_str)
+                item[field] = date_list
+
+            # 处理其他字段
+            else:
+                first_match = matches[0]
+                # 从分组中取有效部分
+                if isinstance(first_match, tuple):
+                    valid_part = max(first_match, key=lambda x: len(x.strip()), default='')
                 else:
-                    item[key] = []
+                    valid_part = first_match.strip()
+                # 去掉首尾多余字符
+                item[field] = re.sub(r'^[^a-zA-Z0-9.]+|[^a-zA-Z0-9.]+$', '', valid_part)
 
         result.append(item)
 
     return result
 
 
-# 测试代码
+# 示例用法
 if __name__ == "__main__":
+    # 测试文本：包含各种格式情况
     text = '''
-标的证券：本期发行的证券为可交换为发行人所持中国长江电力股份
-有限公司股票（股票代码：600900.SH，股票简称：长江电力）的可交换公司债
-券。
-换股期限：本期可交换公司债券换股期限自可交换公司债券发行结束
-之日满 12 个月后的第一个交易日起至可交换债券到期日止，即 2023 年 6 月 2
-日至 2027 年 6 月 1 日止。
+标的证券：本期证券为可交换债券，对应股票代码:  600900.SH！（简称：长江电力）。
+换股期限：自发行结束后12个月起，即 2023年 06月 2日 至 2027 年6月01日止；
+另附：可能存在的其他日期格式 2023-6-2 或 2027.06.1（但优先匹配年/月/日格式）。
 '''
-    regex_list = [{'标的证券': '*自定义*', '换股期限': '*自定义*'}]
+    # 正则表达式，兼容多种格式
+    regex_list = [
+        {
+            '标的证券': r'股票代码[:：\s]*(\d+\.\s*[A-Za-z]{2})',  # 容忍代码前后的空格、符号
+            '换股期限': r'(\d{4})\s*[年/-]\s*(\d{1,2})\s*[月/-]\s*(\d{1,2})\s*[日.]?'  # 兼容多种分隔符
+        }
+    ]
+
     print(reg_search(text, regex_list))
